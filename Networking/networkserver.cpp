@@ -7,7 +7,7 @@ using namespace Networking;
 NetworkServer::NetworkServer(const quint16 _listenPort, const QHostAddress & _hostAddress, const int _maxConnections)
 	: mHostAddress(_hostAddress),
 	mListenPort(_listenPort),
-	mServer(NULL),
+	mServer(nullptr),
 	mPacketCounter(0)
 {
 	mServer = new QTcpServer(this);
@@ -37,7 +37,9 @@ void NetworkServer::stopServer()
 	if (mServer->isListening())
 		mServer->close();
 
+	mRWClients.tryLockForWrite();
 	mClientSockets.clear();
+	mRWClients.unlock();
 }
 
 bool NetworkServer::isListening()
@@ -57,7 +59,13 @@ int NetworkServer::maxClients()
 
 bool NetworkServer::hasAnyClient()
 {
-	return mClientSockets.size() > 0;
+	bool res = false;
+
+	mRWClients.lockForRead();
+	res = mClientSockets.size() > 0;
+	mRWClients.unlock();
+
+	return res;
 }
 
 void NetworkServer::pauseClientAcception()
@@ -71,41 +79,50 @@ void NetworkServer::resumeClientAcception()
 
 bool NetworkServer::sendPacket(NetworkPacket & _packet, NetworkClientInfo & _clientInfo)
 {
+	bool res = false;
+
+	mRWClients.lockForRead();
 	for (int i = 0; i < mClientSockets.count(); i++)
 	{
 		QTcpSocket *socket = mClientSockets.at(i);
 
 		if (socket->peerAddress() == _clientInfo.getAddress() && socket->peerPort() == _clientInfo.getPort())
 		{
-			if (socket->state() != QTcpSocket::ConnectedState)
-				return false;
-
-			_packet.setId(++mPacketCounter);
-
-			QList<NetworkPacket> nps;
-			if (NetworkPacketManipulator::split(_packet, &nps))
+			if (socket->state() == QTcpSocket::ConnectedState)
 			{
-				int len = 0;
-				for each(NetworkPacket np in nps)
-				{
-					QByteArray & ba = np.toBuffer();
-					len = ba.length();
-					if (len != socket->write(ba, len))
-						return false;
-				}
+				res = true;
+				_packet.setId(++mPacketCounter);
 
-				return true;
+				QList<NetworkPacket> nps;
+				if (NetworkPacketManipulator::split(_packet, &nps))
+				{
+					int len = 0;
+					for each(NetworkPacket np in nps)
+					{
+						QByteArray & ba = np.toBuffer();
+						len = ba.length();
+						if (len != socket->write(ba, len))
+						{
+							res = false;
+							break;
+						}
+					}
+				}
 			}
+
+			break;
 		}
 	}
+	mRWClients.unlock();
 
-	return false;
+	return res;
 }
 
 QList<NetworkClientInfo> NetworkServer::clients()
 {
 	QList<NetworkClientInfo> list;
 
+	mRWClients.lockForRead();
 	for (QList<QTcpSocket*>::Iterator it = mClientSockets.begin(); it != mClientSockets.end(); it++)
 	{
 		NetworkClientInfo info;
@@ -113,6 +130,7 @@ QList<NetworkClientInfo> NetworkServer::clients()
 		info.setPort((*it)->peerPort());
 		list.append(info);
 	}
+	mRWClients.unlock();
 
 	return list;
 }
@@ -129,17 +147,24 @@ QString NetworkServer::lastError()
 
 QString NetworkServer::lastClientError(NetworkClientInfo & _clientInfo)
 {
+	QString err;
+
+	mRWClients.lockForRead();
 	for (int i = 0; i < mClientSockets.count(); i++)
 	{
 		QTcpSocket *socket = mClientSockets.at(i);
 		if (socket->peerAddress() == _clientInfo.getAddress() && socket->peerPort() == _clientInfo.getPort())
-			return socket->errorString();
+		{
+			err = socket->errorString();
+			break;
+		}
 	}
+	mRWClients.unlock();
 
-	return QString();
+	return err;
 }
 
-#pragma region slots
+#pragma region Slots
 void NetworkServer::tcpNewConnection()
 {
 	QTcpSocket* socket = mServer->nextPendingConnection();
@@ -150,7 +175,10 @@ void NetworkServer::tcpNewConnection()
 
 	mPartialDataBuffer.insert(socket, QList<NetworkPacket>());
 
+	mRWClients.lockForWrite();
 	mClientSockets.append(socket);
+	mRWClients.unlock();
+
 	emit clientConnected(NetworkClientInfo(socket->peerAddress(), socket->peerPort()));
 }
 
@@ -166,9 +194,11 @@ void NetworkServer::socketDisconnected()
 	{
 		emit clientDisconnected(NetworkClientInfo(socket->peerAddress(), socket->peerPort()));
 
+		mRWClients.lockForWrite();
 		int i = mClientSockets.indexOf(socket);
 		if (i >= 0)
 			mClientSockets.removeAt(i);
+		mRWClients.unlock();
 
 		mPartialDataBuffer.remove(socket);
 

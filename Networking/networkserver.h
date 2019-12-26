@@ -9,6 +9,7 @@ Author: Recep ALTIN
 
 #include <QObject>
 #include <QTcpServer>
+#include <QReadWriteLock>
 #include "networking.h"
 #include "networkpacket.h"
 #include "networkclientinfo.h"
@@ -47,9 +48,10 @@ namespace Networking
 		quint16 mListenPort;
 		QTcpServer * mServer;
 		QList<QTcpSocket *> mClientSockets;
+		QReadWriteLock mRWClients;
 		quint32 mPacketCounter;
 		QMap<QTcpSocket *, QList<NetworkPacket>> mPartialDataBuffer;
-
+		
 #pragma region Signals-Slots
 	signals:
 		void clientConnected(NetworkClientInfo _clientInfo);
