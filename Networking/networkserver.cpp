@@ -37,7 +37,7 @@ void NetworkServer::stopServer()
 	if (mServer->isListening())
 		mServer->close();
 
-	mRWClients.tryLockForWrite();
+	mRWClients.lockForWrite();
 	mClientSockets.clear();
 	mRWClients.unlock();
 }
@@ -254,4 +254,4 @@ void NetworkServer::socketReadyRead()
 		totalBytes -= data.size();
 	}
 }
-#pragma endregion ~slots
+#pragma endregion
