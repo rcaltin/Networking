@@ -55,6 +55,7 @@ void NetworkPacket::clear()
 	mTypeId = 0;
 	mPartOrder = 0;
 	mPartCount = 0;
+	mData.clear();
 }
 
 bool Networking::NetworkPacket::isDataPacket()
